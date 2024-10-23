@@ -1,8 +1,22 @@
+#this code downloaded from here: https://github.com/LiamsGitHub/AS7265x-spectrometer/blob/master/spectrometer.py
 # Python 2.7 module for the SparkFun Triad Spectroscopy board
 # Feb 2019. Version 1
 
 
-from smbus import SMBus											# Module for I2C
+#from smbus import SMBus											# Module for I2C
+import machine
+
+# Create I2C object
+i2c = machine.I2C(0, scl=machine.Pin(21), sda=machine.Pin(20))
+
+# Print out any addresses found
+devices = i2c.scan()
+
+if devices:
+    for d in devices:
+        print(hex(d))
+
+
 import time
 
 # ---- Globals / Constants -----
@@ -16,45 +30,46 @@ READ_REG =		0x02
 TX_VALID =		0x02
 RX_VALID =		0x01
 
-POLLING_DELAY = 0.05											# 50mS delay to prevent swamping the slave's I2C port
-i2c = SMBus(1)													# Indicates /dev/i2c-1
+POLLING_DELAY = 0.05											# 50mS delay to prevent swamping the child's I2C port
+#i2c = SMBus(1)													# Indicates /dev/i2c-1
 
 
 # ---- Low level functions -----
 
-# Low level function to read a Master register over I2C
+# Low level function to read a Parent register over I2C
 # Input variables: addr (Int)
 # Legal input values: n/a
 # Returns: data (int)
 def readReg(addr):
 
-	status = i2c.read_byte_data(I2C_ADDR,STATUS_REG)			# Do a dummy read to ensure FIFO queue is empty
+	status = i2c.readfrom_mem(I2C_ADDR, STATUS_REG, 1)[0]			# Do a dummy read to ensure FIFO queue is empty
+	status
 	if ((status & RX_VALID) != 0):								# There is data to be read
-		incoming = i2c.read_byte_data(I2C_ADDR,READ_REG)		# Read it to clear the queue and dump it
+		incoming = i2c.readfrom_mem(I2C_ADDR,READ_REG, 1)		# Read it to clear the queue and dump it
 
 	while (1):
 
-		status = i2c.read_byte_data(I2C_ADDR,STATUS_REG)		# Poll Slave Status register
+		status = i2c.readfrom_mem(I2C_ADDR,STATUS_REG, 1)[0]		# Poll Child Status register
 
 		if ((status & TX_VALID) == 0):							# Wait for OK to transmit
 			break
 
-		time.sleep(POLLING_DELAY)								# Polling delay to avoid drowning Slave
+		time.sleep(POLLING_DELAY)								# Polling delay to avoid drowning Child
 
-	i2c.write_byte_data(I2C_ADDR, WRITE_REG, addr)				# send to Write register the Virtual Register address
+	i2c.writeto_mem(I2C_ADDR, WRITE_REG, bytes([addr]))				# send to Write register the Virtual Register address
 
 	while (1):
-		status = i2c.read_byte_data(I2C_ADDR,STATUS_REG)		# Poll Slave Status register
+		status = i2c.readfrom_mem(I2C_ADDR,STATUS_REG, 1)[0]		# Poll Child Status register
 
 		if ((status & RX_VALID) != 0):							# Wait for data to be present
 			break
-		time.sleep(0.05)										# Polling delay to avoid drowning Slave
+		time.sleep(0.05)										# Polling delay to avoid drowning Child
 
-	data = i2c.read_byte_data(I2C_ADDR,READ_REG)				# Finally pick up the data
+	data = i2c.readfrom_mem(I2C_ADDR,READ_REG, 1)				# Finally pick up the data
 
 	return data
 
-# Low level function to write to a Master register over I2C
+# Low level function to write to a Parent register over I2C
 # Input variables: addr (Int), data (Int)
 # Legal input values: n/a
 # Returns: none
@@ -62,24 +77,24 @@ def writeReg(addr,data):
 
 	while (1):
 
-		status = i2c.read_byte_data(I2C_ADDR,STATUS_REG)		# Poll Slave Status register
+		status = i2c.readfrom_mem(I2C_ADDR,STATUS_REG, 1)[0]		# Poll Child Status register
 
 		if ((status & TX_VALID) == 0):							# Wait for OK to transmit
 			break
 
 		time.sleep(POLLING_DELAY)
 
-	i2c.write_byte_data(I2C_ADDR, WRITE_REG, addr | 0x80) 		# Send Virtual Register address to Write register 
+	i2c.writeto_mem(I2C_ADDR, WRITE_REG, bytes([addr | 0x80])) 		# Send Virtual Register address to Write register
 
 	while (1):
-		status = i2c.read_byte_data(I2C_ADDR,STATUS_REG)		# Poll Slave Status register
+		status = i2c.readfrom_mem(I2C_ADDR,STATUS_REG, 1)[0]		# Poll Child Status register
 
 		if ((status & TX_VALID) == 0): 							# Ready for the write
 			break
 			
 		time.sleep(POLLING_DELAY)
 
-	i2c.write_byte_data(I2C_ADDR,WRITE_REG,data)				# Do the write
+	i2c.writeto_mem(I2C_ADDR,WRITE_REG,bytes([data]))				# Do the write
 	return
 
 # Calibrated data comes back as IEEE754 encoded number (sign/mantissa/fraction). Need to convert to a float. Spec page 27.
@@ -88,10 +103,10 @@ def writeReg(addr,data):
 # Returns: Float
 def IEEE754toFloat(valArray):
 
-	c0 = valArray[0]
-	c1 = valArray[1]
-	c2 = valArray[2]
-	c3 = valArray[3]
+	c0 = int.from_bytes(valArray[0], 'big')
+	c1 = int.from_bytes(valArray[1], 'big')
+	c2 = int.from_bytes(valArray[2], 'big')
+	c3 = int.from_bytes(valArray[3], 'big')
 	
 	fullChannel = (c0 <<24) | (c1 << 16) | (c2 << 8) | (c3)
 
@@ -116,7 +131,7 @@ def IEEE754toFloat(valArray):
 # Input variables: (String) device name
 # Legal input values: n/a
 # Returns: Bool True if OK
-# Note: There is a BUG in the AS firmware: you CAN'T to read/modify/write. Doesn't work. Just overwrite whole register.
+# Note: There is a BUG in the AS firmware: you CAN'T do read/modify/write. Doesn't work. Just overwrite whole register.
 def setDEVSEL(device):
 
 	DEVSELbits = {"AS72651":0b00, "AS72652": 0b01, "AS72653": 0b10}
@@ -201,7 +216,7 @@ def temperatures():
 	return (temps)
 
 
-# Set master blue LED state (device 1 on IND line)
+# Set parent blue LED state (device 1 on IND line)
 # Input variables: state (Bool)
 # Legal input values: True, False
 # Returns: Bool. True if OK.
@@ -212,13 +227,13 @@ def setBlueLED(state):
 	currentState = readReg(0x07)
 
 	if (state):
-		newState = (currentState | 0b1 )
+		newState = 1 #(currentState | 0b1 )  <--unnecessary as far as I can tell
 	else:
-		newState = (currentState & 0b11111110 )
+		newState = 0 #(currentState & 0b11111110 ) <--unnecessary as far as I can tell
 
 	writeReg(0x07,newState)
 	return (True)
-    
+
 
 # Switch on/off shutter individual LEDs attached to sensor DRV lines
 # Input variables: device (String), state (Bool)
@@ -235,7 +250,7 @@ def shutterLED(device,state):
 		return (False)
 		
 	setDEVSEL(device)
-	currentState = readReg(0x07)
+	currentState = readReg(0x07)[0]
 	
 	if (state == True):
 		newState = (currentState | 0b1000)
@@ -293,7 +308,7 @@ def setIntegrationTime(time):
 
 
 # Set sensor gains for all devices together
-# Input variables: gain (Int) 
+# Input variables: gain (Int)
 # Legal input values:  0, 1, 2, 3 where b00=1x; b01=3.7x; b10=16x; b11=64x
 # Returns: Bool. True if OK.
 def setGain(gain):
@@ -338,7 +353,7 @@ def readRAW():
 
 # now reorder the data to be in monotonic frequency order
 	output = reorderData(RAWValues)
-	print output
+	print (output)
 
 	return (output)
 
@@ -361,11 +376,13 @@ def readCAL():
 			cal1 = readReg(regQuad[1])
 			cal2 = readReg(regQuad[2])
 			cal3 = readReg(regQuad[3])
+			#print([cal0, cal1, cal2, cal3])
 			floatval = IEEE754toFloat([cal0,cal1,cal2,cal3])
 			CALValues.append(floatval)
 
 # now reorder the data to be in monotonic frequency order
 	output = reorderData(CALValues)
-	print output
+	print (output)
 
 	return (output)
+
