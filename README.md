@@ -2,6 +2,8 @@
 Python module to drive the SparkFun Triad Spectroscopy Sensor
 https://www.sparkfun.com/products/15050
 
+## Note: this code was updated to run this sensor using a Raspberry Pi Pico and Micropython
+
 ## Board physical properties
 
 The board consists of 3 devices, each with 6 sensors with passbands ranging from UV to IR.
